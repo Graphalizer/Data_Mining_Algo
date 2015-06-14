@@ -1,76 +1,47 @@
-import operator
-import math
-import random
-import copy
+import numpy as np
+import pandas as pd
+#import time
+import threading
+import concurrent.futures
 
-def loadData(pathToFile, clusterSet = []):
-    file = open(pathToFile, 'r')
-    for line in file:
-        # create string without new line symbol '\n'
-        string = line[:-1]
-        # append splitted string without class index
-        clusterSet.append(string.split(',')[:-1])
-    file.close()
-    for x in range(len(clusterSet)):
-        for y in range(len(clusterSet[x])):
-            clusterSet[x][y] = float(clusterSet[x][y])
+class ClusteringTask(threading.Thread):
+    def __init__(self, idx, arr, numOfThread, barrier, mtx):
+        self.idx = idx
+        self.arr = arr
+        self.numOfThread = numOfThread
+        self.barrier = barrier
+        self.mtx = mtx
+        threading.Thread.__init__(self)
 
+    def run(self):
+        try:
+            while(not all(noChanges)): # повторять пока перестанут изменяться значения классов
+                for i in range(self.idx, len(self.arr), self.numOfThread):
+                    pivot = self.arr[i]
+                    count = 0
+                    distList = []
+                    for j in range(len(meanSet)):
+                        distList.append( (np.sqrt(np.sum((self.arr[i,:-1] - meanSet[j])*(self.arr[i,:-1] - meanSet[j]))), j) )
+                        sortList = sorted(distList, key = lambda x: x[0] )
+                        self.arr[i][-1] = sortList[0][1]
+                    if pivot[-1] != self.arr[i][-1]:
+                        count += 1
+                if count == 0:
+                    noChanges[self.idx] = True
+                b.wait() # ждем все потоки закончат назначать классы, чтобы вычислить новые значения средних
+                # recalculate means
+                # вычислить новые значения центров кластеров
+                with mtx:
+                    for i in range(len(meanSet)):
+                        mask = (self.arr[:,-1] == i)
+                        meanSet[i] = np.sum(self.arr[mask][:,:-1], axis=0)/len(self.arr[mask])
 
-def euclideanDistance(sample1, sample2):
-    dist = 0.0
-    for i in range(len(sample1)):
-        dist += (sample1[i] - sample2[i]) * (sample1[i] - sample2[i])
-    return math.sqrt(dist)
+                b.wait() # ждем поток, который перевычисляет значения центров
 
-def startMean(dataSet, k):
-    meanSet = random.sample(dataSet, k)
-    return meanSet
+            #return self.arr
+        except threading.BrokenBarrierError:
+             print(traceback.print_exc())
 
-def getCluster(dataSet, meanSet):
-    for i in range(len(dataSet)):
-        distanceList = []
-        for j in range(len(meanSet)):
-            metric = euclideanDistance(dataSet[i], meanSet[j])
-            distanceList.append((metric, j))
-        sortDist = sorted(distanceList, key = operator.itemgetter(0))
-        #print(sortDist)
-        # assign cluster name as meanSet index + 1
-        dataSet[i].append(sortDist[0][1]+1)
-    #print(dataSet)
-
-def recalculateMean(dataSet, k):
-    meanSet = []
-    for x in range(k):
-        meanSet.append([0]*(len(dataSet[0])-1))
-        for j in range(len(dataSet[0])-1):
-            count = 0
-            for i in range(len(dataSet)-1):
-                # class index is (x + 1)
-                if (x+1) == dataSet[i][-1]:
-                    meanSet[x][j] += dataSet[i][j]
-                    count += 1
-        for l in range(len(meanSet[x])):
-            if count > 0:
-                meanSet[x][l] = meanSet[x][l]/count
-    return meanSet
-
-def deleteClusterName(dataSet):
-    for i in range(len(dataSet)):
-        del dataSet[i][-1]
-
-def listCompare(dataset1, dataset2):
-    #print(dataset1)
-    #print(dataset2)
-    if (len(dataset1) + len(dataset2)) == 0:
-        return 0
-    elif len(dataset1) != len(dataset2):
-        return 1
-    else:
-        count = 0
-        for i in range(len(dataset1)):
-            if dataset1[i][-1] != dataset2[i][-1]:
-                count += 1
-        return count
 
 def plotCluster(dataSet, meanSet, k):
     import matplotlib.pyplot as plt
@@ -83,12 +54,9 @@ def plotCluster(dataSet, meanSet, k):
         for m in range(len(dataSet[0])-1):
             for x in range(k):
                 clr = colors[x % len(colors)]
-                xcluster = []
-                ycluster = []
-                for i in range(len(dataSet)-1):
-                    if (x+1) == dataSet[i][-1]:
-                        xcluster.append(dataSet[i][n])
-                        ycluster.append(dataSet[i][m])
+                mask = (dataSet[:,-1] == x)
+                xcluster = dataSet[mask][:,n]
+                ycluster = dataSet[mask][:,m]
                 if n == m:
                     axes[m][n].text(0.05, 0.5, names[n], size = 22, name='Tahoma', weight='bold')
                     axes[m][n].set_xticklabels([])
@@ -103,53 +71,41 @@ def plotCluster(dataSet, meanSet, k):
                         axes[m][n].set_yticklabels([])
     plt.show()
 
-def ClusteringEffectiveness(meanSet, clusterSet, k): # return F0/F1 - quality of clustering
-    funcValue = []
-    for i in range(k):
-        count = 0
-        functional = 0
-        for j in range(len(clusterSet)):
-            if (i+1) == clusterSet[j][-1]:
-                functional += euclideanDistance(meanSet[i], clusterSet[j])*euclideanDistance(meanSet[i], clusterSet[j])
-                count += 1
-        if count > 0:
-             functional = functional/count
-             funcValue.append(functional)
-    F0 = 0
-    for x in range(len(funcValue)):
-        F0 += funcValue[x]
-    MassCenterList = []
-    for y in range(len(clusterSet[0])-1):
-        MassCenter = 0
-        for x in range(len(clusterSet)):
-            MassCenter += clusterSet[x][y]/len(clusterSet)
-        MassCenterList.append(MassCenter)
-    F1 = 0
-    for i in range(len(meanSet)):
-        F1 += euclideanDistance(meanSet[i], MassCenterList)*euclideanDistance(meanSet[i], MassCenterList)
-    return F0/F1
+def loadData(pathToFile):
+    dataFr = pd.read_csv(pathToFile, header=None, names=['sepL','sepW','petL','petW','name']) #import data in DataFrame
+    x = np.array(dataFr.ix[:, 0:4])
+    #print(x[:5])
+    dataArr = np.append(x, np.zeros((len(x),1), dtype=float), axis=1)
+    return dataArr
 
-def main():
-    clusteringQuality = {}
-    clusterSetAfter = []
+
+def startMean(arr, k):
+    indexes = np.random.randint(0, 149, k)
+    meanSet = arr[indexes][:,:-1]
+    return meanSet
+
+
+if __name__ == '__main__':
+    numOfThreads = 10
     k = 3
-    # number of random choice of cluster centers
-    numberOfiterations = 10
-    loadData(r'D:\Data for ML\iris.data', clusterSetAfter)
-    for i in range(numberOfiterations):
-        clusterSetBefore = []
-        meanSet = startMean(clusterSetAfter, k)
-        getCluster(clusterSetAfter, meanSet)
-        while clusterSetAfter != clusterSetBefore:
-            clusterSetBefore = copy.deepcopy(clusterSetAfter)
-            meanSet = recalculateMean(clusterSetAfter, k)
-            deleteClusterName(clusterSetAfter)
-            getCluster(clusterSetAfter, meanSet)
-        Fratio = ClusteringEffectiveness(meanSet, clusterSetAfter, k)
-        clusteringQuality[Fratio] = meanSet, copy.deepcopy(clusterSetAfter)
-        deleteClusterName(clusterSetAfter)
-    bestMean = sorted(clusteringQuality.items(), key = operator.itemgetter(0))
-    plotCluster(bestMean[0][1][1], bestMean[0][1][0], k)
+    noChanges = [False]*numOfThreads
+    array = loadData(r'D:\Data for ML\iris.data')
+    meanSet = startMean(array, k)
+    #print(meanSet)
+    mtx = threading.Lock()
+    b = threading.Barrier(numOfThreads)
+    Exec = concurrent.futures.ThreadPoolExecutor(numOfThreads)
+    ftr = concurrent.futures.Future()
+    threads = []
 
+    for i in range(numOfThreads):
+        threads.append(ClusteringTask(i, array, numOfThreads, b, mtx))
+    try:
+        for i in range(numOfThreads):
+            ftr = Exec.submit(threads[i].start())
+    except Exception:
+        print(traceback.print_exc())
+    finally:
+        Exec.shutdown()
 
-main()
+    plotCluster(array, meanSet, k)
